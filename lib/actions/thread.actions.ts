@@ -3,6 +3,7 @@ import Thread from "../models/thread.model";
 import { connectToDB } from "../mongoose";
 import User from "../models/user.model";
 import { revalidatePath } from "next/cache";
+import Community from "../models/community.model";
 
 interface Params {
   text: string;
@@ -19,18 +20,26 @@ export async function createThread({
 }: Params) {
   try {
     connectToDB();
-
+    const communityIdObject = await Community.findOne(
+      { id: communityId },
+      { _id: 1 }
+    );
     const createdThread = await Thread.create({
       text,
       author,
-      community: null,
+      community: communityIdObject,
     });
 
     // Update user model
     await User.findByIdAndUpdate(author, {
       $push: { threads: createdThread._id },
     });
-
+    if (communityIdObject) {
+      // Update Community model
+      await Community.findByIdAndUpdate(communityIdObject, {
+        $push: { threads: createdThread._id },
+      });
+    }
     revalidatePath(path);
   } catch (error: any) {
     throw new Error(`Error creating thread: ${error.message}`);
@@ -49,13 +58,17 @@ export async function fetchPosts(pageNumber = 1, pageSize = 20) {
     .sort({ createdAt: "desc" })
     .skip(skipAmount)
     .limit(pageSize)
-    .populate({ path: "author", model: User })
+    .populate({
+      path: "author",
+      model: User,
+    })
+
     .populate({
       path: "children",
       populate: {
         path: "author",
         model: User,
-        select: "_id name parentId Image",
+        select: "_id name parentId image",
       },
     });
 
@@ -70,16 +83,20 @@ export async function fetchPosts(pageNumber = 1, pageSize = 20) {
   return { posts, isNext };
 }
 
-export async function fetchThreadById(id: string) {
+export async function fetchThreadById(threadId: string) {
   connectToDB();
 
   try {
-    // TODO: populate community
-    const thread = await Thread.findById(id)
+    const thread = await Thread.findById(threadId)
       .populate({
         path: "author",
         model: User,
-        select: " _id id name image",
+        select: "_id id name image",
+      })
+      .populate({
+        path: "community",
+        model: Community,
+        select: "_id id name image",
       })
 
       .populate({
